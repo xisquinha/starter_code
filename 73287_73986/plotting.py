@@ -84,7 +84,7 @@ def plot_pr_curve(curves, title="Precision-recall curve", path=None):
     ax.set_ylim(0, 1.02)
     ax.grid(alpha=0.3)
     ax.set_title(title)
-    ax.legend(loc="lower left")
+    ax.legend(loc="lower right")
     fig.tight_layout()
     if path:
         fig.savefig(path, dpi=150)

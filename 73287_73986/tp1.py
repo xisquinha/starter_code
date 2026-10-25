@@ -100,7 +100,7 @@ def edge_change_ration(f1, f2):
     elif (np.sum(canny2) != 0):
         b = x_in/np.sum(canny2)
     
-    ecr = np.max(a, b)
+    ecr = max(a, b)
 
     return ecr
 
