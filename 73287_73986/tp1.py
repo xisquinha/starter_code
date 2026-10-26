@@ -34,6 +34,17 @@ def read_frames(path, size=(320, 180)):
     return frames
 
 
+def merge_close(pred, min_gap=5):
+    merged = []
+    for f in pred:
+        if not merged or f - merged[-1] > min_gap:
+            merged.append(f)
+    return merged
+
+def detect_cuts(signal, T, min_gap=5):
+    return merge_close([i + 1 for i, v in enumerate(signal) if v > T], min_gap)
+
+
 def process_video(frames, gt_shots):
     """Return (transitions, scenes) for one video.
 
@@ -42,6 +53,30 @@ def process_video(frames, gt_shots):
     """
     transitions, scenes = [], {}
     # TODO: Parts 1, 2 and 3. Everything else (writing the output, evaluation, summary table) is done for you.
+    
+    T_hist = 0.122
+
+    d_hist = []
+    prev_frame = frames[0]
+    for i in range(len(frames) - 1):
+
+        frame = frames[i]
+
+        hist1 = bgr_histogram(prev_frame)
+        hist2 = bgr_histogram(frame)
+    
+        pixel_dif = pixel_difference(prev_frame, frame)
+        hist_dif = histogram_distance(hist1, hist2)
+        ecr = edge_change_ration(prev_frame, frame)
+    
+        d_hist.append(hist_dif)
+        prev_frame = frame
+
+    cuts = detect_cuts(d_hist, T_hist)
+
+    for cut in cuts:
+        transitions.append({"type": "cut", "start":cut, "end": cut})
+    
     return transitions, scenes
 
 
