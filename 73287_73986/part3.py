@@ -210,13 +210,11 @@ def compute_global_shot_similarity_matrix_full(shots, video_capture, kf_strategy
     Constrói a matriz global shot x shot com pré-computação total (Cor + SIFT em cache),
     aproveitando a simetria da matriz para maior velocidade.
     """
-    print("A pré-extrair keyframes, histogramas e descritores SIFT...")
     cache = precompute_shot_keyframes_with_sift(shots, video_capture, strategy=kf_strategy)
     
     num_shots = len(shots)
     global_matrix = np.zeros((num_shots, num_shots))
     
-    print("A calcular a matriz global de similaridade (Cor + SIFT)...")
     for i in range(num_shots):
         for j in range(num_shots):
             if i < j:
@@ -228,5 +226,4 @@ def compute_global_shot_similarity_matrix_full(shots, video_capture, kf_strategy
             else: 
                 global_matrix[i, j] = 1.0
             
-    print("Matriz global calculada com sucesso!")
     return global_matrix
