@@ -19,6 +19,8 @@ import metrics
 
 INPUT_DIR = os.path.join("..", "input")
 OUTPUT_DIR = os.path.join("..", "output")
+GAP = 4
+T_HIST = 0.122
 
 
 def read_frames(path, size=(320, 180)):
@@ -45,7 +47,41 @@ def detect_cuts(signal, T, min_gap=5):
     return merge_close([i + 1 for i, v in enumerate(signal) if v > T], min_gap)
 
 
-def process_video(frames, gt_shots):
+def sift_matches(frame1, frame2):
+    gray1 = cv.cvtColor(frame1, cv.COLOR_BGR2GRAY)
+    gray2 = cv.cvtColor(frame2, cv.COLOR_BGR2GRAY)
+
+    sift = cv.SIFT_create()
+    kp1, des1 = sift.detectAndCompute(gray1, None)
+    kp2, des2 = sift.detectAndCompute(gray2, None)
+
+    if des1 is None or des2 is None or len(des1) < 2 or len(des2) < 2:
+            return 0.0
+    
+    des1 = des1.astype(np.float32)
+    des2 = des2.astype(np.float32)
+
+    bf = cv.BFMatcher()
+    matches = bf.knnMatch(des1, des2, k=2)
+
+    good = []
+    for m, n in matches:
+        if m.distance < 0.75 * n.distance:
+            good.append([m])
+
+    return good, matches, kp1, kp2
+
+
+
+def verification_false_alarms(f1, f2, T=0.11):
+    good, matches, _, _ = sift_matches(f1, f2)
+    if len(matches) == 0:
+        return False
+    else:
+        return len(good) / len(matches) > T
+
+
+def process_video(frames, gt_shots, verify=True):
     """Return (transitions, scenes) for one video.
 
     transitions: list of {"type": "cut", "start": t, "end": t}, t = first frame of the new shot (Parts 1 and 2)
@@ -53,8 +89,7 @@ def process_video(frames, gt_shots):
     """
     transitions, scenes = [], {}
     # TODO: Parts 1, 2 and 3. Everything else (writing the output, evaluation, summary table) is done for you.
-    
-    T_hist = 0.122
+
 
     d_hist = []
     prev_frame = frames[0]
@@ -65,19 +100,24 @@ def process_video(frames, gt_shots):
         hist1 = bgr_histogram(prev_frame)
         hist2 = bgr_histogram(frame)
     
-        pixel_dif = pixel_difference(prev_frame, frame)
         hist_dif = histogram_distance(hist1, hist2)
-        ecr = edge_change_ration(prev_frame, frame)
     
         d_hist.append(hist_dif)
         prev_frame = frame
 
-    cuts = detect_cuts(d_hist, T_hist)
+    cuts = detect_cuts(d_hist, T_HIST)
 
     for cut in cuts:
-        transitions.append({"type": "cut", "start":cut, "end": cut})
+
+        prev_cut = 0
+        pos_cut = len(frames) - 1
+        if(cut > GAP-1): prev_cut = cut - GAP
+        if(cut + GAP < len(frames) - 1): pos_cut = cut + GAP
+        
+        if not verification_false_alarms(frames[prev_cut], frames[pos_cut]) or not verify:
+            transitions.append({"type": "cut", "start":cut, "end": cut})
     
-    return transitions, scenes
+    return {"transitions":transitions, "scenes": scenes}
 
 
 ## assuming that f1 and f2 are in BGR
@@ -138,6 +178,21 @@ def edge_change_ration(f1, f2):
     ecr = max(a, b)
 
     return ecr
+
+
+## aux functions
+def print_metrics(cuts1, cuts2):
+
+    tp, fp, fn = metrics.match_cuts(cuts2, cuts1)
+    precision, recall, f1 = metrics.precision_recall_f1(tp, fp, fn)
+
+    print("true positives:", tp)
+    print("false positives:", fp)
+    print("FN?:", fn)
+
+    print("precision:", precision)
+    print("recall:", recall)
+    print("f1:", f1)
 
 
 if __name__ == "__main__":
