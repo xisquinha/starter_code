@@ -101,10 +101,10 @@ def combine_keyframe_similarities(similarities_matrix, method="best_pair"):
         # Melhor match de cada linha (Shot 1 -> Shot 2)
         best_from_shot1 = np.max(matrix, axis=1)
         # Melhor match de cada coluna (Shot 2 -> Shot 1)
-        best_from_shot2 = np.max(matrix, axis=0)
+        #best_from_shot2 = np.max(matrix, axis=0)
 
-        all_best_matches = np.concatenate([best_from_shot1, best_from_shot2])
-        return float(np.mean(all_best_matches))
+        #all_best_matches = np.concatenate([best_from_shot1, best_from_shot2])
+        return float(np.mean(best_from_shot1))
         
     return 0.0
 
