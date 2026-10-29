@@ -23,6 +23,7 @@ OUTPUT_DIR = os.path.join("..", "output")
 GAP = 4
 T_HIST = 0.122
 T_SIFT = 0.11
+T_SCENES = 0.8 
 
 
 def read_frames(path, size=(320, 180)):
@@ -58,7 +59,7 @@ def sift_matches(frame1, frame2):
     kp2, des2 = sift.detectAndCompute(gray2, None)
 
     if des1 is None or des2 is None or len(des1) < 2 or len(des2) < 2:
-            return 0.0
+            return [], [], [], []
     
     des1 = des1.astype(np.float32)
     des2 = des2.astype(np.float32)
@@ -75,7 +76,7 @@ def sift_matches(frame1, frame2):
 
 
 
-def verification_false_alarms(f1, f2, T=T_HIST):
+def verification_false_alarms(f1, f2, T=T_SIFT):
     good, matches, _, _ = sift_matches(f1, f2)
     if len(matches) == 0:
         return False
@@ -83,7 +84,7 @@ def verification_false_alarms(f1, f2, T=T_HIST):
         return len(good) / len(matches) > T
 
 
-def process_video(frames, gt_shots, verify=True):
+def process_video(frames, gt_shots, verify=True, use_gt=True):
     """Return (transitions, scenes) for one video.
 
     transitions: list of {"type": "cut", "start": t, "end": t}, t = first frame of the new shot (Parts 1 and 2)
@@ -94,18 +95,14 @@ def process_video(frames, gt_shots, verify=True):
 
 
     d_hist = []
-    prev_frame = frames[0]
     for i in range(len(frames) - 1):
 
-        frame = frames[i]
-
-        hist1 = bgr_histogram(prev_frame)
-        hist2 = bgr_histogram(frame)
+        hist1 = bgr_histogram(frames[i])
+        hist2 = bgr_histogram(frames[i+1])
     
         hist_dif = histogram_distance(hist1, hist2)
     
         d_hist.append(hist_dif)
-        prev_frame = frame
 
     cuts = detect_cuts(d_hist, T_HIST)
 
@@ -118,8 +115,22 @@ def process_video(frames, gt_shots, verify=True):
         
         if not verification_false_alarms(frames[prev_cut], frames[pos_cut]) or not verify:
             transitions.append({"type": "cut", "start":cut, "end": cut})
+
+    if use_gt: shots = gt_shots
+    else: shots = transitions_to_shots(transitions)
+      # Recurring scenes detection - part 3
+    shot_similarities = compute_global_shot_similarity_matrix_full(
+        shots, 
+        frames, 
+        kf_strategy="single_middle",
+        combination_method="max_mutual_matching",
+        alpha=0.5
+    )
+
+    labels = grouping.group_shots(shot_similarities, threshold=T_SCENES)
+    scenes = {str(s["id"]): label for s, label in zip(shots, labels)}
     
-    return {"transitions":transitions, "scenes": scenes}
+    return transitions, scenes
 
 
 ## assuming that f1 and f2 are in BGR
@@ -128,7 +139,7 @@ def pixel_difference(f1, f2):
     f1_gray = cv.cvtColor(f1, cv.COLOR_BGR2GRAY)
     f2_gray = cv.cvtColor(f2, cv.COLOR_BGR2GRAY)
 
-    dif = abs(f1_gray - f2_gray)
+    dif = np.abs(f1_gray.astype(np.int16) - f2_gray.astype(np.int16))
 
     return np.mean(dif)
 
@@ -147,8 +158,7 @@ def histogram_distance(h1, h2):
     h2 = np.asarray(h2, dtype=float)
    
     mask = (h1 + h2) > 0
-    chi = 0.5 * np.sum([((xi - yi) ** 2) / (xi + yi) 
-                        for (xi, yi) in zip(h1[mask], h2[mask])])
+    chi = 0.5 * np.sum((h1[mask] - h2[mask]) ** 2 / (h1[mask] + h2[mask]))
 
     return chi
 
@@ -168,14 +178,11 @@ def edge_change_ration(f1, f2):
     x_in = np.sum(np.array(canny2) & ~np.array(f1_dilate))
     x_out = np.sum(np.array(canny1) & ~np.array(f2_dilate))
 
-    a = 0
-    b = 0
+    n1 = np.sum(canny1)
+    n2 = np.sum(canny2)
 
-    ## check if any of the frames don't have any edge
-    if(np.sum(canny1) != 0):
-        a = x_out/np.sum(canny1)
-    elif (np.sum(canny2) != 0):
-        b = x_in/np.sum(canny2)
+    a = x_out / n1 if n1 > 0 else 0.0
+    b = x_in / n2 if n2 > 0 else 0.0
     
     ecr = max(a, b)
 
@@ -203,6 +210,16 @@ def cut_list_to_transitions(list):
         cuts.append({"type": "cut", "start": cut, "end": cut})
 
     return {"transitions":cuts, "scenes":{}}
+
+
+def transitions_to_shots(trans):
+
+    trans = [t["start"] for t in trans]
+    shots = []
+
+    for i in range(1, len(trans)):
+        shots.append({"id":i-1, "start":trans[i-1], "end":trans[i]-1, "scene":"S"+str(i)})
+    return shots
 
 
 # diferentes estratégias para escolher keyframes de um shot
@@ -311,7 +328,7 @@ def combine_keyframe_similarities(similarities_matrix, method="best_pair"):
 #   TASK 6
 # -----------------
 
-def precompute_shot_keyframes_with_sift(shots, video_capture, strategy="fst_middle_last", num_kfs=3):
+def precompute_shot_keyframes_with_sift(shots, frames, strategy="fst_middle_last", num_kfs=3):
     """
     Guarda em cache os keyframes, respetivos histogramas (cor) e descritores SIFT.
     """
@@ -323,24 +340,23 @@ def precompute_shot_keyframes_with_sift(shots, video_capture, strategy="fst_midd
         
         shot_kfs_data = []
         for idx in kf_indices:
-            video_capture.set(cv.CAP_PROP_POS_FRAMES, idx)
-            ret, frame = video_capture.read()
+
+            frame = frames[idx]
             
-            if ret:
-                # histograma de cor
-                hist = bgr_histogram(frame)
-                
-                # SIFT
-                gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
-                kp, des = sift.detectAndCompute(gray, None)
-                
-                shot_kfs_data.append({
-                    "index": idx,
-                    "image": frame,
-                    "hist": hist,
-                    "kp": kp,
-                    "des": des
-                })
+            # histograma de cor
+            hist = bgr_histogram(frame)
+            
+            # SIFT
+            gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+            kp, des = sift.detectAndCompute(gray, None)
+            
+            shot_kfs_data.append({
+                "index": idx,
+                "image": frame,
+                "hist": hist,
+                "kp": kp,
+                "des": des
+            })
                 
         cache.append(shot_kfs_data)
         
@@ -403,12 +419,12 @@ def compute_shot_similarity_from_cache(cacheA, cacheB, combination_method="max_m
     return float(combine_keyframe_similarities(kf_matrix, method=combination_method))
 
 
-def compute_global_shot_similarity_matrix_full(shots, video_capture, kf_strategy="fst_middle_last", combination_method="max_mutual_matching", alpha=0.5):
+def compute_global_shot_similarity_matrix_full(shots, frames, kf_strategy="fst_middle_last", combination_method="max_mutual_matching", alpha=0.5):
     """
     Constrói a matriz global shot x shot com pré-computação total (Cor + SIFT em cache),
     aproveitando a simetria da matriz para maior velocidade.
     """
-    cache = precompute_shot_keyframes_with_sift(shots, video_capture, strategy=kf_strategy)
+    cache = precompute_shot_keyframes_with_sift(shots, frames, strategy=kf_strategy)
     
     num_shots = len(shots)
     global_matrix = np.zeros((num_shots, num_shots))
