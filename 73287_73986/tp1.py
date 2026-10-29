@@ -2,8 +2,8 @@
 ## Computer Vision 2026-2027 - NOVA FCT
 ## Project Stage 1 - Shot boundary detection and recurring scenes
 ##
-## Student 1 (number)
-## Student 2 (number)
+## Beatriz Guerreiro (73287)
+## Francisca Inácio (73986)
 ##
 ###############################################################################
 
