@@ -223,7 +223,7 @@ def transitions_to_shots(trans):
 
 
 # diferentes estratégias para escolher keyframes de um shot
-def extract_keyframes(shot, strategy="single", num_kfs=3):
+def extract_keyframes(shot, strategy="single", num_kfs=5):
     start = shot["start"]
     end = shot["end"]
     keyframes = []
