@@ -76,7 +76,8 @@ def plot_pr_curve(curves, title="Precision-recall curve", path=None):
         f1 = [2 * p * r / (p + r) if p + r > 0 else 0.0 for p, r in zip(precision, recall)]
         b = max(range(len(f1)), key=f1.__getitem__)
         ax.plot(recall[b], precision[b], "o", color=line.get_color(), ms=7, mfc="none")
-        ax.annotate(f"T={thresholds[b]:.3g}, F1={f1[b]:.2f}", (recall[b], precision[b]),
+        print(f"T={thresholds[b]:.3g}")
+        ax.annotate(f"T{name}= {thresholds[b]:.3g}, F1={f1[b]:.2f}", (recall[b], precision[b]),
                     textcoords="offset points", xytext=(-8, -14), ha="right", fontsize=8, color=line.get_color())
     ax.set_xlabel("recall")
     ax.set_ylabel("precision")

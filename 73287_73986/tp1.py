@@ -11,6 +11,8 @@ import glob
 import json
 import os
 import random
+import math
+import matplotlib.pyplot as plt 
 
 import cv2 as cv
 import numpy as np
@@ -139,16 +141,20 @@ def pixel_difference(f1, f2):
     f1_gray = cv.cvtColor(f1, cv.COLOR_BGR2GRAY)
     f2_gray = cv.cvtColor(f2, cv.COLOR_BGR2GRAY)
 
-    dif = np.abs(f1_gray.astype(np.int16) - f2_gray.astype(np.int16))
+    dif = np.abs(f1_gray.astype(np.int8) - f2_gray.astype(np.int8))
 
     return np.mean(dif)
 
 
-def bgr_histogram(img, bins=256):
+def bgr_histogram(img, bins=256, show_hist=False):
     hists = []
     for c in range(3):
         h = cv.calcHist([img], [c], None, [bins], [0, 256]).flatten()
         hists.append(h)
+
+    if show_hist:
+        return hists
+
     h = np.concatenate(hists)
     return h / h.sum()  # normalize so image size doesn't matter
 
@@ -441,6 +447,29 @@ def compute_global_shot_similarity_matrix_full(shots, frames, kf_strategy="fst_m
                 global_matrix[i, j] = 1.0
             
     return global_matrix
+
+def show_images(images, per_row=5, size=3, scenes=None, cmaps = []):
+    n = len(images)
+    rows = math.ceil(n / per_row)          # 37 / 5 -> 8 rows
+
+    _, axes = plt.subplots(rows, per_row, figsize=(per_row * size, rows * size))
+    axes = axes.flatten()
+
+    for i, ax in enumerate(axes):
+        if i < n:
+            if(len(cmaps) == 0): cmap = None
+            else: cmap = cmaps[i]
+
+            if cmap == None: img = cv.cvtColor(images[i], cv.COLOR_BGR2RGB)
+            else: img = images[i]
+            
+            ax.imshow(img, cmap = cmap)
+            if scenes is not None:
+                ax.set_title("Shot "+str(i)+", labled:"+str(scenes[str(i)]), fontsize=9)
+        ax.axis("off")                      # also hides the unused slots (3 empty ones here)
+
+    plt.tight_layout()
+    plt.show()
 
 
 if __name__ == "__main__":
