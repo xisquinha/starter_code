@@ -42,17 +42,59 @@ def read_frames(path, size=(320, 180)):
 
 
 def merge_close(pred, min_gap=5):
+    """
+    Merge cuts that are too close to each other, keeping only the first one.
+
+    This helps filtering the cuts, since the change between shots can happen in
+    more than one frame, so the algorithm would detect the same cut more than
+    once. A cut is dropped if it is at most 'min_gap' frames after the last cut.
+
+    Args:
+        pred (list): list of cut frame indices
+        min_gap (int): maximum distance at which two cuts are considered to be
+        the same one
+
+    Returns:
+        list: the same list of cut indices, but with very close cuts merged
+    """
     merged = []
     for f in pred:
-        if not merged or f - merged[-1] > min_gap:
+        if len(merged) == 0 or f - merged[-1] > min_gap:
             merged.append(f)
     return merged
 
+
 def detect_cuts(signal, T=T_HIST, min_gap=5):
+    """
+    Detect in which frames a cut occurs.
+
+    Args:
+        signal (list): dissimiarity values between consecutives frames
+        T (float): threshold for the same dissimilarity as the signal. A cut
+        is detected when the value is higher than T.
+        min_gap (int): the gap to pass to the merge_close function
+
+    Returns:
+        list: indices of the cuts, each index is the first frame of the new shot
+    """
     return merge_close([i + 1 for i, v in enumerate(signal) if v > T], min_gap)
 
 
 def sift_matches(frame1, frame2):
+    """
+    Compare the local features of two images using SIFT and Lowe's ratio test.
+    If either image has fewer than 2 descriptors, four empty lists are returned.
+
+    Args:
+        frame1 (numpy.ndarray): first image to compare (in BGR)
+        frame2 (numpy.ndarray): second image to compare (in BGR)
+
+    Returns:
+        list: matches that passed the Lowe's ratio test
+        tuple: all candidate matches
+        tuple: detected keypoints in the frame1
+        tuple: detected keypoints in the frame2
+    """
     gray1 = cv.cvtColor(frame1, cv.COLOR_BGR2GRAY)
     gray2 = cv.cvtColor(frame2, cv.COLOR_BGR2GRAY)
 
@@ -79,6 +121,20 @@ def sift_matches(frame1, frame2):
 
 
 def verification_false_alarms(f1, f2, T=T_SIFT):
+    """
+    Check whether a detected cut is a false alarm using SIFT.
+    f1 and f2 are frames taken before and after the candidate cut. If they look
+    very alike, the cut is probably a false alarm.
+
+    Args:
+        f1 (numpy.ndarray): first frame, in BGR
+        f2 (numpy.ndarray): second frame, in BGR
+        T (float): minimum ratio of good matches / candidate matches, for both
+         frames to be considered similar (Lowe's test)
+
+    Returns:
+        bool: true if the frames are similar, false otherwise
+    """
     good, matches, _, _ = sift_matches(f1, f2)
     if len(matches) == 0:
         return False
@@ -87,15 +143,27 @@ def verification_false_alarms(f1, f2, T=T_SIFT):
 
 
 def process_video(frames, gt_shots, verify=True, use_gt=True):
-    """Return (transitions, scenes) for one video.
+    """
+    Detect cuts and group shots into recurring scenes for one video.
 
-    transitions: list of {"type": "cut", "start": t, "end": t}, t = first frame of the new shot (Parts 1 and 2)
-    scenes:      dict {str(shot id): label} for the ground-truth shots (Part 3)
+    Cuts come from thresholding the chi distance between the color histograms 
+    of consecutive frames, then filtered with SIFT. Shots are then grouped by 
+    similarity.
+
+    Args:
+        frames (list): frames of the video
+        gt_shots (list): ground-truth shots, dicts with "id", "start", "end"
+        verify (bool): if true run the video frames through SIFT
+        use_gt (bool): if true, group the ground-truth shots, otherwise use the
+            shots built from the detected cuts
+    
+    Returns:
+        list: transitions, dicts {"type": "cut", "start": t, "end": t}, t = first 
+        frame of the new shot (Parts 1 and 2)
+        dict: {str(shot id): scene label} for the ground-truth shots (Part 3)
     """
     transitions, scenes = [], {}
-    # TODO: Parts 1, 2 and 3. Everything else (writing the output, evaluation, summary table) is done for you.
-
-
+    
     d_hist = []
     for i in range(len(frames) - 1):
 
@@ -115,11 +183,11 @@ def process_video(frames, gt_shots, verify=True, use_gt=True):
         if(cut > GAP-1): prev_cut = cut - GAP
         if(cut + GAP < len(frames) - 1): pos_cut = cut + GAP
         
-        if not verification_false_alarms(frames[prev_cut], frames[pos_cut]) or not verify:
+        if not verify or not verification_false_alarms(frames[prev_cut], frames[pos_cut]):
             transitions.append({"type": "cut", "start":cut, "end": cut})
 
     if use_gt: shots = gt_shots
-    else: shots = transitions_to_shots(transitions)
+    else: shots = transitions_to_shots(transitions, len(frames))
       # Recurring scenes detection - part 3
     shot_similarities = compute_global_shot_similarity_matrix_full(
         shots, 
@@ -138,15 +206,39 @@ def process_video(frames, gt_shots, verify=True, use_gt=True):
 ## assuming that f1 and f2 are in BGR
 ## mean absolute difference of grey levels. This is your baseline.
 def pixel_difference(f1, f2):
+    """
+    Mean absolute difference of gray levels between two BGR frames
+
+    Args:
+        f1 (numpy.ndarray): first frame, in BGR
+        f2 (numpy.ndarray): second frame, in BGR
+
+    Returns:
+        float: result of the difference [0, 255]
+    """
     f1_gray = cv.cvtColor(f1, cv.COLOR_BGR2GRAY)
     f2_gray = cv.cvtColor(f2, cv.COLOR_BGR2GRAY)
 
-    dif = np.abs(f1_gray.astype(np.int8) - f2_gray.astype(np.int8))
+    dif = np.abs(f1_gray.astype(np.int16) - f2_gray.astype(np.int16))
 
     return np.mean(dif)
 
 
 def bgr_histogram(img, bins=256, show_hist=False):
+    """
+    Generates a histogram color for a BGR image
+
+    Args:
+        img (numpy.ndarray): BGR image
+        bins (int): bins per channel
+        show_hist (bool): if true, return histograms as a list of 3 arrays for 
+        plotting
+
+    Returns:
+        numpy.ndarray: vector of 3*bins values normalised, so the image size 
+        does not matter, or a list of 3 arrays if show_hist
+    """
+    
     hists = []
     for c in range(3):
         h = cv.calcHist([img], [c], None, [bins], [0, 256]).flatten()
@@ -160,6 +252,17 @@ def bgr_histogram(img, bins=256, show_hist=False):
 
 # Function to calculate Chi-distance    
 def histogram_distance(h1, h2):
+    """
+    Chi-square distance between two histograms.
+    
+    Args:
+        h1 (numpy.ndarray): histogram of first image
+        h2 (numpy.ndarray): histogram of second image
+
+    Returns:
+        float: chi distance
+    """
+
     h1 = np.asarray(h1, dtype=float)
     h2 = np.asarray(h2, dtype=float)
    
@@ -171,6 +274,20 @@ def histogram_distance(h1, h2):
 
 
 def edge_change_ration(f1, f2):
+    """
+    Edge Change Ratio between two BGR frames.
+    Canny edges are extracted from both frames (thresholds 40/200). Edge
+    pixels of f2 not within a 5x5 dilation of f1's edges are "entering",
+    and edge pixels of f1 not near f2's edges are "exiting".
+
+    Args:
+        f1 (numpy.ndarray): first frame, in BGR
+        f2 (numpy.ndarray): second frame, in BGR
+
+    Returns:
+        float: max(exiting / edges in f1, entering / edges in f2)
+    """
+
     f1_gray = cv.cvtColor(f1, cv.COLOR_BGR2GRAY)
     f2_gray = cv.cvtColor(f2, cv.COLOR_BGR2GRAY)
 
@@ -197,6 +314,9 @@ def edge_change_ration(f1, f2):
 
 ## aux functions
 def print_metrics(cuts1, cuts2):
+    """
+    Print TP, FP, FN, precision, recall and F1 for two lists of cut indices.
+    """
 
     tp, fp, fn = metrics.match_cuts(cuts2, cuts1)
     precision, recall, f1 = metrics.precision_recall_f1(tp, fp, fn)
@@ -211,6 +331,13 @@ def print_metrics(cuts1, cuts2):
 
 
 def cut_list_to_transitions(list):
+    """
+    Convert a list of cut indices into the output format of the project.
+
+    Returns:
+        dict: {"transitions": [{"type": "cut", "start": n, "end": n}, "scenes": {}}
+    """
+     
     cuts = []
     for cut in list:
         cuts.append({"type": "cut", "start": cut, "end": cut})
@@ -218,13 +345,21 @@ def cut_list_to_transitions(list):
     return {"transitions":cuts, "scenes":{}}
 
 
-def transitions_to_shots(trans):
+def transitions_to_shots(trans, num_frames):
+    """
+    Build shots from the detected cuts.
+    Each shot goes from one cut to the frame before the next. 
+
+    Returns:
+        list: dicts {"id", "start", "end", "scene"}
+    """
 
     trans = [t["start"] for t in trans]
+    bounds = [0] + trans + [num_frames]
     shots = []
 
-    for i in range(1, len(trans)):
-        shots.append({"id":i-1, "start":trans[i-1], "end":trans[i]-1, "scene":"S"+str(i)})
+    for i in range(len(bounds) - 1):
+        shots.append({"id":i, "start":bounds[i], "end":trans[i+1]-1, "scene":"S"+str(i)})
     return shots
 
 
@@ -257,7 +392,7 @@ def extract_keyframes(shot, strategy="single", num_kfs=3):
             keyframes.append(random.randint(start, end))
 
     elif strategy == "random_10%":  # 10% aleatórios do total de frames no shot 
-        num = int((end - start) * 0.1)
+        num = int((end - start + 1) * 0.1)
         for i in range(num):
             keyframes.append(random.randint(start, end))
         
