@@ -25,7 +25,7 @@ OUTPUT_DIR = os.path.join("..", "output")
 GAP = 4
 T_HIST = 0.122
 T_SIFT = 0.11
-T_SCENES = 0.8 
+T_SCENES = 0.55 
 
 
 def read_frames(path, size=(320, 180)):
@@ -124,7 +124,7 @@ def process_video(frames, gt_shots, verify=True, use_gt=True):
     shot_similarities = compute_global_shot_similarity_matrix_full(
         shots, 
         frames, 
-        kf_strategy="single_middle",
+        kf_strategy="single_fst",
         combination_method="max_mutual_matching",
         alpha=0.5
     )
@@ -334,7 +334,7 @@ def combine_keyframe_similarities(similarities_matrix, method="best_pair"):
 #   TASK 6
 # -----------------
 
-def precompute_shot_keyframes_with_sift(shots, frames, strategy="fst_middle_last", num_kfs=3):
+def precompute_shot_keyframes_with_sift(shots, frames, strategy="single_fst", num_kfs=3):
     """
     Guarda em cache os keyframes, respetivos histogramas (cor) e descritores SIFT.
     """
@@ -425,7 +425,7 @@ def compute_shot_similarity_from_cache(cacheA, cacheB, combination_method="max_m
     return float(combine_keyframe_similarities(kf_matrix, method=combination_method))
 
 
-def compute_global_shot_similarity_matrix_full(shots, frames, kf_strategy="fst_middle_last", combination_method="max_mutual_matching", alpha=0.5):
+def compute_global_shot_similarity_matrix_full(shots, frames, kf_strategy="single_fst", combination_method="max_mutual_matching", alpha=0.5):
     """
     Constrói a matriz global shot x shot com pré-computação total (Cor + SIFT em cache),
     aproveitando a simetria da matriz para maior velocidade.
