@@ -25,7 +25,8 @@ OUTPUT_DIR = os.path.join("..", "output")
 GAP = 4
 T_HIST = 0.122
 T_SIFT = 0.11
-T_SCENES = 0.8 
+T_SCENES = 0.75
+alpha = 0.75 
 
 
 def read_frames(path, size=(320, 180)):
@@ -142,7 +143,7 @@ def verification_false_alarms(f1, f2, T=T_SIFT):
         return len(good) / len(matches) > T
 
 
-def process_video(frames, gt_shots, verify=True, use_gt=True):
+def process_video(frames, gt_shots, verify=True, use_gt=True, alpha=alpha, th=T_SCENES):
     """
     Detect cuts and group shots into recurring scenes for one video.
 
@@ -192,12 +193,12 @@ def process_video(frames, gt_shots, verify=True, use_gt=True):
     shot_similarities = compute_global_shot_similarity_matrix_full(
         shots, 
         frames, 
-        kf_strategy="single_middle",
+        kf_strategy="single_fst",
         combination_method="max_mutual_matching",
-        alpha=0.5
+        alpha=alpha
     )
 
-    labels = grouping.group_shots(shot_similarities, threshold=T_SCENES)
+    labels = grouping.group_shots(shot_similarities, threshold=th)
     scenes = {str(s["id"]): label for s, label in zip(shots, labels)}
     
     return transitions, scenes
@@ -345,7 +346,7 @@ def cut_list_to_transitions(list):
     return {"transitions":cuts, "scenes":{}}
 
 
-def transitions_to_shots(trans, num_frames):
+def transitions_to_shots(transitions, num_frames):
     """
     Build shots from the detected cuts.
     Each shot goes from one cut to the frame before the next. 
@@ -354,17 +355,18 @@ def transitions_to_shots(trans, num_frames):
         list: dicts {"id", "start", "end", "scene"}
     """
 
-    trans = [t["start"] for t in trans]
-    bounds = [0] + trans + [num_frames]
+    cut_indices = [t["start"] for t in transitions]
+    bounds = [0] + cut_indices + [num_frames]
+    
     shots = []
-
     for i in range(len(bounds) - 1):
-        shots.append({"id":i, "start":bounds[i], "end":trans[i+1]-1, "scene":"S"+str(i)})
+        shot = {"id": i, "start": bounds[i], "end": bounds[i+1] - 1, "scene": f"S{i}"}
+        shots.append(shot)
     return shots
 
 
 # diferentes estratégias para escolher keyframes de um shot
-def extract_keyframes(shot, strategy="single", num_kfs=3):
+def extract_keyframes(shot, strategy="single_fst", num_kfs=5):
     start = shot["start"]
     end = shot["end"]
     keyframes = []
@@ -469,7 +471,7 @@ def combine_keyframe_similarities(similarities_matrix, method="best_pair"):
 #   TASK 6
 # -----------------
 
-def precompute_shot_keyframes_with_sift(shots, frames, strategy="fst_middle_last", num_kfs=3):
+def precompute_shot_keyframes_with_sift(shots, frames, strategy="single_fst", num_kfs=3):
     """
     Guarda em cache os keyframes, respetivos histogramas (cor) e descritores SIFT.
     """
@@ -560,7 +562,7 @@ def compute_shot_similarity_from_cache(cacheA, cacheB, combination_method="max_m
     return float(combine_keyframe_similarities(kf_matrix, method=combination_method))
 
 
-def compute_global_shot_similarity_matrix_full(shots, frames, kf_strategy="fst_middle_last", combination_method="max_mutual_matching", alpha=0.5):
+def compute_global_shot_similarity_matrix_full(shots, frames, kf_strategy="single_fst", combination_method="max_mutual_matching", alpha=0.5):
     """
     Constrói a matriz global shot x shot com pré-computação total (Cor + SIFT em cache),
     aproveitando a simetria da matriz para maior velocidade.
