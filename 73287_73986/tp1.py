@@ -70,7 +70,7 @@ def detect_cuts(signal, T=T_HIST, min_gap=5):
     Detect in which frames a cut occurs.
 
     Args:
-        signal (list): dissimiarity values between consecutives frames
+        signal (list): dissimilarity values between consecutive frames
         T (float): threshold for the same dissimilarity as the signal. A cut
         is detected when the value is higher than T.
         min_gap (int): the gap to pass to the merge_close function
@@ -187,9 +187,10 @@ def process_video(frames, gt_shots, verify=True, use_gt=True, alpha=alpha, th=T_
         if not verify or not verification_false_alarms(frames[prev_cut], frames[pos_cut]):
             transitions.append({"type": "cut", "start":cut, "end": cut})
 
+    # Recurring scenes detection - part 3
     if use_gt: shots = gt_shots
     else: shots = transitions_to_shots(transitions, len(frames))
-      # Recurring scenes detection - part 3
+
     shot_similarities = compute_global_shot_similarity_matrix_full(
         shots, 
         frames, 
@@ -227,7 +228,7 @@ def pixel_difference(f1, f2):
 
 def bgr_histogram(img, bins=256, show_hist=False):
     """
-    Generates a histogram color for a BGR image
+    Generate a color histogram for a BGR image
 
     Args:
         img (numpy.ndarray): BGR image
@@ -365,35 +366,48 @@ def transitions_to_shots(transitions, num_frames):
     return shots
 
 
-# diferentes estratégias para escolher keyframes de um shot
 def extract_keyframes(shot, strategy="single_fst", num_kfs=5):
+    """
+    Select keyframe indices from a shot according to the requested strategy
+
+    Args:
+        shot (dict): shot data containing the inclusive "start" and "end" frame
+            indices
+        strategy (str): selection strategy: "single_fst", "single_middle",
+            "fst_middle_last", "multiple_eq", "random", or "random_10%"
+        num_kfs (int): maximum number of keyframes for the "multiple_eq" and
+            "random" strategies
+
+    Returns:
+        list: selected frame indices
+    """
     start = shot["start"]
     end = shot["end"]
     keyframes = []
     
-    if strategy == "single_fst":  # Apenas o 1º frame
+    if strategy == "single_fst":  # Select only the first frame
         keyframes.append(start)
 
-    elif strategy == "single_middle":  # Apenas o frame do meio
+    elif strategy == "single_middle":  # Select only the middle frame
         mid = (start + end) // 2
         keyframes.append(mid)
 
-    elif strategy == "fst_middle_last":  # Usa o frame do meio, o primeiro e o último
+    elif strategy == "fst_middle_last":  # Select the first, middle, and last frames
         mid = (start + end) // 2
         keyframes.append(start)
         keyframes.append(mid)
         keyframes.append(end)
         
-    elif strategy == "multiple_eq":  # Vários keyframes espaçados igualmente
+    elif strategy == "multiple_eq":  # Select evenly spaced keyframes
         num = min(num_kfs, end - start)
         keyframes = [int(x) for x in np.linspace(start, end, num)]
 
-    elif strategy == "random":  # n aleatórios
+    elif strategy == "random":  # Select n random frames
         num = min(num_kfs, end - start)
         for i in range(num):
             keyframes.append(random.randint(start, end))
 
-    elif strategy == "random_10%":  # 10% aleatórios do total de frames no shot 
+    elif strategy == "random_10%":  # Select a random 10% of the shot's frames
         num = int((end - start + 1) * 0.1)
         for i in range(num):
             keyframes.append(random.randint(start, end))
@@ -401,8 +415,20 @@ def extract_keyframes(shot, strategy="single_fst", num_kfs=5):
     return keyframes
 
 
-# diferentes metodos para combinar as similarities num só valor
 def combine_keyframe_similarities(similarities_matrix, method="best_pair"):
+    """
+    Combine keyframe-pair similarity scores into one shot-pair score
+
+    Args:
+        similarities_matrix (array-like): matrix of similarities between
+            keyframes from two shots
+        method (str): aggregation strategy: "best_pair", "average", "sum",
+            "threshold_count", "vote", "weighted_threshold_count",
+            "tiered_weighted_average", or "max_mutual_matching"
+
+    Returns:
+        float: combined similarity score
+    """
     matrix = np.array(similarities_matrix)
     
     if method == "best_pair":
@@ -415,7 +441,7 @@ def combine_keyframe_similarities(similarities_matrix, method="best_pair"):
         return np.sum(matrix)
         
     elif method == "threshold_count" or method == "vote":
-        # Contar quantos pares passam de um limiar de similaridade (ex: > 0.6)
+        # Count pairs whose similarity exceeds the threshold
         threshold = 0.6
         matching_pairs = np.sum(matrix > threshold)
         return float(matching_pairs)
@@ -455,13 +481,9 @@ def combine_keyframe_similarities(similarities_matrix, method="best_pair"):
     elif method == "max_mutual_matching":
         if matrix.size == 0:
             return 0.0
-
-        # Melhor match de cada linha (Shot 1 -> Shot 2)
+        # Find the best match for each keyframe from the first shot
+        # The best in each row
         best_from_shot1 = np.max(matrix, axis=1)
-        # Melhor match de cada coluna (Shot 2 -> Shot 1)
-        #best_from_shot2 = np.max(matrix, axis=0)
-
-        #all_best_matches = np.concatenate([best_from_shot1, best_from_shot2])
         return float(np.mean(best_from_shot1))
         
     return 0.0
@@ -473,7 +495,17 @@ def combine_keyframe_similarities(similarities_matrix, method="best_pair"):
 
 def precompute_shot_keyframes_with_sift(shots, frames, strategy="single_fst", num_kfs=3):
     """
-    Guarda em cache os keyframes, respetivos histogramas (cor) e descritores SIFT.
+    Cache each shot's selected keyframes, color histograms, and SIFT descriptors
+
+    Args:
+        shots (list): shot dictionaries with frame boundaries
+        frames (list): video frames in BGR format
+        strategy (str): keyframe selection strategy passed to
+            :func:`extract_keyframes`
+        num_kfs (int): maximum keyframes for supported multi-keyframe strategies
+
+    Returns:
+        list: per-shot lists of keyframe data dictionaries
     """
     sift = cv.SIFT_create()
     cache = []
@@ -486,10 +518,10 @@ def precompute_shot_keyframes_with_sift(shots, frames, strategy="single_fst", nu
 
             frame = frames[idx]
             
-            # histograma de cor
+            # Compute the color histogram
             hist = bgr_histogram(frame)
             
-            # SIFT
+            # Detect SIFT keypoints and compute descriptors
             gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
             kp, des = sift.detectAndCompute(gray, None)
             
@@ -508,7 +540,16 @@ def precompute_shot_keyframes_with_sift(shots, frames, strategy="single_fst", nu
 
 def cached_sift_similarity(des1, des2, ratio=0.7, max_expected_matches=50):
     """
-    Calcula a similaridade SIFT usando descritores já pré-computados e FLANN.
+    Compute SIFT similarity from precomputed descriptors using FLANN matching
+
+    Args:
+        des1 (numpy.ndarray or None): SIFT descriptors from the first keyframe
+        des2 (numpy.ndarray or None): SIFT descriptors from the second keyframe
+        ratio (float): Lowe's ratio-test threshold
+        max_expected_matches (int): match count that corresponds to a score of 1.0
+
+    Returns:
+        float: normalized count of good matches, capped at 1.0
     """
     if des1 is None or des2 is None or len(des1) < 2 or len(des2) < 2:
         return 0.0
@@ -531,8 +572,16 @@ def cached_sift_similarity(des1, des2, ratio=0.7, max_expected_matches=50):
 
 def cached_keyframe_similarity(kfA, kfB, alpha=0.5):
     """
-    Calcula a similaridade total (Cor + SIFT) entre dois keyframes usando a cache.
-    alpha: peso da cor (0 a 1). O SIFT fica com (1 - alpha).
+    Combine color-histogram and SIFT similarities for two cached keyframes
+
+    Args:
+        kfA (dict): first keyframe data, including "hist" and "des"
+        kfB (dict): second keyframe data, including "hist" and "des"
+        alpha (float): weight assigned to color similarity; SIFT receives
+            weight ``1 - alpha``
+
+    Returns:
+        float: weighted keyframe similarity
     """
     chi_dist = histogram_distance(kfA["hist"], kfB["hist"])
     sim_col = max(0.0, 1.0 - chi_dist)
@@ -546,7 +595,16 @@ def cached_keyframe_similarity(kfA, kfB, alpha=0.5):
 
 def compute_shot_similarity_from_cache(cacheA, cacheB, combination_method="max_mutual_matching", alpha=0.5):
     """
-    Calcula a similaridade final entre dois shots usando a cache completa (Cor + SIFT).
+    Compute the similarity between two shots from their cached keyframes
+
+    Args:
+        cacheA (list): cached keyframe data for the first shot
+        cacheB (list): cached keyframe data for the second shot
+        combination_method (str): method used to combine keyframe similarities
+        alpha (float): weight assigned to color similarity
+
+    Returns:
+        float: combined shot similarity, or 0.0 if either cache is empty
     """
     if not cacheA or not cacheB:
         return 0.0
@@ -564,8 +622,18 @@ def compute_shot_similarity_from_cache(cacheA, cacheB, combination_method="max_m
 
 def compute_global_shot_similarity_matrix_full(shots, frames, kf_strategy="single_fst", combination_method="max_mutual_matching", alpha=0.5):
     """
-    Constrói a matriz global shot x shot com pré-computação total (Cor + SIFT em cache),
-    aproveitando a simetria da matriz para maior velocidade.
+    Build a symmetric shot similarity matrix using cached color and
+    SIFT features.
+
+    Args:
+        shots (list): shot dictionaries with frame boundaries
+        frames (list): video frames in BGR format
+        kf_strategy (str): keyframe selection strategy
+        combination_method (str): method used to combine keyframe similarities
+        alpha (float): weight assigned to color similarity
+
+    Returns:
+        numpy.ndarray: square matrix of pairwise shot similarities
     """
     cache = precompute_shot_keyframes_with_sift(shots, frames, strategy=kf_strategy)
     
@@ -586,6 +654,19 @@ def compute_global_shot_similarity_matrix_full(shots, frames, kf_strategy="singl
     return global_matrix
 
 def show_images(images, per_row=5, size=3, scenes=None, cmaps = []):
+    """
+    Display images in a grid, optionally labeling them with scene information
+
+    Args:
+        images (list): images to display; BGR images are converted to RGB
+            unless a colormap is supplied for the corresponding image
+        per_row (int): number of grid columns
+        size (float): size, in inches, of each grid cell
+        scenes (dict or None): optional mapping from image index strings to
+            scene labels
+        cmaps (list): optional per-image colormaps; an empty list uses RGB
+            conversion for every image
+    """
     n = len(images)
     rows = math.ceil(n / per_row)          # 37 / 5 -> 8 rows
 
